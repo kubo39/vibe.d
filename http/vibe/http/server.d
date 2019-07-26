@@ -2268,7 +2268,7 @@ private bool handleRequest(InterfaceProxy!Stream http_stream, TCPConnection tcp_
 		if (req.method == HTTPMethod.HEAD) res.m_isHeadResponse = true;
 		if (settings.serverString.length)
 			res.headers["Server"] = settings.serverString;
-		res.headers["Date"] = formatRFC822DateAlloc(request_allocator, reqtime);
+		res.headers["Date"] = formatRFC822DateAlloc(reqtime);
 		if (req.persistent)
 			res.headers["Keep-Alive"] = formatAlloc(
 				request_allocator, "timeout=%d", settings.keepAliveTimeout.total!"seconds"());
@@ -2427,11 +2427,37 @@ shared static this()
 	}
 }
 
-private string formatRFC822DateAlloc(IAllocator alloc, SysTime time)
+private struct CacheTime
+{
+	string cachedDate;
+	SysTime nextUpdate;
+
+	this(SysTime nextUpdate) @trusted
+	{
+		this.nextUpdate = nextUpdate;
+	}
+
+	void update(SysTime time) @trusted
+	{
+		this.nextUpdate = time + 1.seconds;
+		this.nextUpdate.fracSecs = nsecs(0);
+	}
+}
+
+private static LAST = CacheTime(SysTime.min());
+
+private string formatRFC822DateAlloc(SysTime time)
 @safe {
-	auto app = AllocAppender!string(alloc);
-	writeRFC822DateTimeString(app, time);
-	return () @trusted { return app.data; } ();
+	if (time > LAST.nextUpdate) {
+		auto app = new FixedAppender!(string, 29);
+		return () @trusted {
+			writeRFC822DateTimeString(app, time);
+			LAST.update(time);
+			LAST.cachedDate = app.data;
+			return app.data;
+		} ();
+	} else
+		return LAST.cachedDate;
 }
 
 version (VibeDebugCatchAll) private alias UncaughtException = Throwable;
